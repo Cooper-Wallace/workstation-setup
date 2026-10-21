@@ -1,0 +1,597 @@
+#!/usr/bin/env python3
+"""
+workstation-setup: Cross-Platform Meta-Orchestrator, Toolchain Auditor, and Shell Environment Bridge.
+Part of the 4-layer workstation configuration ecosystem.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+VERSION = "1.0.0"
+
+# Filesystem layout constants
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+CONFIG_DIR = REPO_ROOT / "config"
+TOOLCHAINS_FILE = CONFIG_DIR / "toolchains.json"
+
+DEFAULT_BASHRC_PATH = Path.home() / ".bashrc"
+DEFAULT_PROFILE_PATH = Path.home() / ".profile"
+DEFAULT_DB_PATH = Path.home() / "dev.db"
+
+# Canonical markers for the Antigravity Standards Environment block
+ENV_BLOCK_START = "# >>> Antigravity Standards Environment >>>"
+ENV_BLOCK_END = "# <<< Antigravity Standards Environment <<<"
+
+
+class Colors:
+    """ANSI color formatting helpers."""
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    CYAN = "\033[96m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    RESET = "\033[0m"
+
+
+def colorize(text: str, color: str) -> str:
+    """Apply ANSI styling if running in an interactive terminal."""
+    if not sys.stdout.isatty():
+        return text
+    return f"{color}{text}{Colors.RESET}"
+
+
+def detect_os(override: Optional[str] = None) -> str:
+    """
+    Detect running operating system normalized to 'linux', 'macos', or 'windows'.
+    Supports explicit manual overrides.
+    """
+    if override and override.lower() != "auto":
+        val = override.strip().lower()
+        if val in ("darwin", "osx", "macos"):
+            return "macos"
+        elif val in ("win32", "windows"):
+            return "windows"
+        elif val in ("linux", "ubuntu", "debian"):
+            return "linux"
+        return val
+
+    sys_plat = sys.platform.lower()
+    sys_name = platform.system().lower()
+
+    if "darwin" in sys_plat or "darwin" in sys_name:
+        return "macos"
+    elif "win32" in sys_plat or "cygwin" in sys_plat or "windows" in sys_name:
+        return "windows"
+    else:
+        return "linux"
+
+
+def load_toolchains_catalog(config_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Load declarative toolchains catalog from JSON configuration."""
+    target_path = config_path or TOOLCHAINS_FILE
+    if not target_path.exists():
+        raise FileNotFoundError(f"Toolchains catalog not found at: {target_path}")
+
+    with open(target_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def filter_tools_by_profile(catalog: Dict[str, Any], profile: str) -> Dict[str, Any]:
+    """
+    Filter tools catalog according to cumulative profile tier:
+    - 'minimal': only tools marked 'minimal'
+    - 'dev': tools marked 'minimal' or 'dev'
+    - 'full': all tools ('minimal', 'dev', 'full')
+    """
+    profile_lower = profile.lower()
+    tier_map = {
+        "minimal": {"minimal"},
+        "dev": {"minimal", "dev"},
+        "full": {"minimal", "dev", "full"},
+    }
+    allowed_tiers = tier_map.get(profile_lower, {"minimal", "dev"})
+    tools = catalog.get("tools", {})
+    return {
+        key: data
+        for key, data in tools.items()
+        if data.get("profile", "minimal") in allowed_tiers
+    }
+
+
+def audit_toolchains(
+    catalog: Dict[str, Any], profile: str = "dev", target_os: str = "linux"
+) -> List[Dict[str, Any]]:
+    """
+    Audit system for presence of tools in the specified profile tier.
+    Returns status records including primary binary, companion binaries, and install command.
+    """
+    filtered_tools = filter_tools_by_profile(catalog, profile)
+    results: List[Dict[str, Any]] = []
+
+    for key, tool in filtered_tools.items():
+        binary = tool.get("binary", key)
+        companion_bins = tool.get("companion_bins", [])
+
+        primary_path = shutil.which(binary)
+        missing_companions = [b for b in companion_bins if shutil.which(b) is None]
+
+        installed = (primary_path is not None) and (len(missing_companions) == 0)
+        install_commands = tool.get("install", {})
+        install_cmd = install_commands.get(target_os, "")
+
+        results.append({
+            "key": key,
+            "name": tool.get("name", key),
+            "binary": binary,
+            "binary_path": primary_path,
+            "companion_bins": companion_bins,
+            "missing_bins": missing_companions,
+            "installed": installed,
+            "install_cmd": install_cmd,
+            "profile": tool.get("profile", "minimal"),
+            "category": tool.get("category", "general"),
+            "description": tool.get("description", ""),
+        })
+
+    return results
+
+
+def get_standard_env_block() -> str:
+    """
+    Return canonical Antigravity Standards shell environment block.
+    Dynamically exports GITHUB_PERSONAL_ACCESS_TOKEN and SQLITE_DEV_DB.
+    """
+    lines = [
+        ENV_BLOCK_START,
+        "# Dynamically resolve GitHub token from gh keyring if not already exported",
+        "if command -v gh >/dev/null 2>&1; then",
+        '    export GITHUB_PERSONAL_ACCESS_TOKEN="${GITHUB_PERSONAL_ACCESS_TOKEN:-$(gh auth token 2>/dev/null)}"',
+        "fi",
+        "",
+        "# Default SQLite development database path for Antigravity SQLite MCP server",
+        'export SQLITE_DEV_DB="${SQLITE_DEV_DB:-$HOME/dev.db}"',
+        ENV_BLOCK_END,
+    ]
+    return "\n".join(lines)
+
+
+def configure_shell_environment(
+    bashrc_path: Path,
+    profile_path: Optional[Path] = None,
+    db_path: Optional[Path] = None,
+    dry_run: bool = False,
+) -> Tuple[bool, str]:
+    """
+    Idempotently injects or updates the standard environment block in bashrc and profile.
+    Ensures sqlite dev database path exists if not dry-run.
+    Returns (changed, summary_message).
+    """
+    block = get_standard_env_block()
+    changed = False
+    messages: List[str] = []
+
+    targets = [bashrc_path]
+    if profile_path is not None and profile_path.exists():
+        targets.append(profile_path)
+
+    for target in targets:
+        if not target.exists():
+            if dry_run:
+                changed = True
+                messages.append(f"Would create and inject standard env block into {target}")
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(block + "\n", encoding="utf-8")
+                changed = True
+                messages.append(f"Created and injected standard env block into {target}")
+            continue
+
+        content = target.read_text(encoding="utf-8")
+        if ENV_BLOCK_START in content and ENV_BLOCK_END in content:
+            pattern = re.compile(
+                re.escape(ENV_BLOCK_START) + r".*?" + re.escape(ENV_BLOCK_END),
+                re.DOTALL,
+            )
+            match = pattern.search(content)
+            if match and match.group(0).strip() == block.strip():
+                messages.append(f"Standard env block in {target} is up-to-date")
+            else:
+                if dry_run:
+                    changed = True
+                    messages.append(f"Would update standard env block in {target}")
+                else:
+                    new_content = pattern.sub(block, content)
+                    target.write_text(new_content, encoding="utf-8")
+                    changed = True
+                    messages.append(f"Updated standard env block in {target}")
+        else:
+            if dry_run:
+                changed = True
+                messages.append(f"Would append standard env block to {target}")
+            else:
+                prefix = "\n" if content and not content.endswith("\n") else ""
+                new_content = content + prefix + block + "\n"
+                target.write_text(new_content, encoding="utf-8")
+                changed = True
+                messages.append(f"Appended standard env block to {target}")
+
+    # Dev database initialization
+    sqlite_db = db_path if db_path is not None else DEFAULT_DB_PATH
+    if dry_run:
+        if not sqlite_db.exists():
+            messages.append(f"Would touch SQLite dev database at {sqlite_db}")
+        else:
+            messages.append(f"SQLite dev database present at {sqlite_db}")
+    else:
+        sqlite_db.parent.mkdir(parents=True, exist_ok=True)
+        if not sqlite_db.exists():
+            sqlite_db.touch(exist_ok=True)
+            messages.append(f"Created SQLite dev database at {sqlite_db}")
+        else:
+            sqlite_db.touch(exist_ok=True)
+            messages.append(f"Verified SQLite dev database at {sqlite_db}")
+
+    return changed, "; ".join(messages)
+
+
+def run_cmd_interactive(cmd: str, dry_run: bool = False) -> int:
+    """Helper to run a shell command or simulate during dry-run."""
+    if dry_run:
+        print(f"  {colorize('[DRY-RUN]', Colors.YELLOW)} Would execute: {cmd}")
+        return 0
+    print(f"  {colorize('[RUN]', Colors.CYAN)} Executing: {cmd}")
+    res = subprocess.run(cmd, shell=True)
+    return res.returncode
+
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    """Execute complete 4-layer workstation audit."""
+    target_os = detect_os(args.os)
+    profile = args.profile.lower()
+    bashrc_path = Path(args.bashrc_path).expanduser().resolve()
+
+    print(colorize(f"╔═════════════════════════════════════════════════════════════════╗", Colors.BOLD))
+    print(colorize(f"║ Workstation Setup Audit Engine v{VERSION}                        ║", Colors.BOLD))
+    print(colorize(f"╚═════════════════════════════════════════════════════════════════╝", Colors.BOLD))
+    print(f"Target OS: {colorize(target_os, Colors.CYAN)} | Architecture: {platform.machine()} | Profile: {colorize(profile, Colors.CYAN)}")
+    print(f"Shell RC:  {bashrc_path}")
+    print()
+
+    has_failures = False
+
+    # Layer 0: Platform OS & Desktop
+    print(colorize("--- Layer 0: Platform OS & Desktop ---", Colors.BOLD))
+    l0_repo = Path.home() / "Projects" / "riced-kubuntu-os"
+    if target_os == "linux":
+        if l0_repo.exists():
+            print(f"  {colorize('✓', Colors.GREEN)} Found riced-kubuntu-os repository: {l0_repo}")
+        else:
+            print(f"  {colorize('ℹ', Colors.BLUE)} riced-kubuntu-os not detected at {l0_repo} (optional for headless/non-KDE)")
+    else:
+        print(f"  {colorize('ℹ', Colors.BLUE)} Layer 0 desktop profile skipped on {target_os} (Linux specific)")
+
+    # Layer 1: Developer Toolchains
+    print()
+    print(colorize(f"--- Layer 1: Developer Toolchains ({profile} tier) ---", Colors.BOLD))
+    catalog = load_toolchains_catalog()
+    tool_audits = audit_toolchains(catalog, profile=profile, target_os=target_os)
+
+    installed_count = 0
+    total_count = len(tool_audits)
+
+    for item in tool_audits:
+        if item["installed"]:
+            installed_count += 1
+            path_str = f" ({item['binary_path']})" if item.get("binary_path") else ""
+            print(f"  {colorize('✓', Colors.GREEN)} {item['name']:<22} [installed]{path_str}")
+        else:
+            has_failures = True
+            missing_reason = "missing"
+            if item.get("missing_bins"):
+                missing_reason = f"missing companion bins: {', '.join(item['missing_bins'])}"
+            print(f"  {colorize('✗', Colors.RED)} {item['name']:<22} [{missing_reason}]")
+            if args.verbose or not item["installed"]:
+                print(f"      Install command: {colorize(item['install_cmd'], Colors.DIM)}")
+
+    print(f"  Status: {installed_count}/{total_count} toolchains installed for '{profile}' profile.")
+
+    # Layer 2: Shell Environment Bridge & Agent Governance
+    print()
+    print(colorize("--- Layer 2: Shell Environment Bridge & Agent Governance ---", Colors.BOLD))
+    env_ok = False
+    if bashrc_path.exists():
+        content = bashrc_path.read_text(encoding="utf-8")
+        if ENV_BLOCK_START in content and ENV_BLOCK_END in content:
+            env_ok = True
+            print(f"  {colorize('✓', Colors.GREEN)} Managed environment block present in {bashrc_path}")
+        else:
+            print(f"  {colorize('✗', Colors.RED)} Managed environment block MISSING in {bashrc_path}")
+            has_failures = True
+    else:
+        print(f"  {colorize('✗', Colors.RED)} Shell config file {bashrc_path} not found")
+        has_failures = True
+
+    # Dev DB status
+    dev_db = DEFAULT_DB_PATH
+    if dev_db.exists():
+        print(f"  {colorize('✓', Colors.GREEN)} SQLite dev database present: {dev_db}")
+    else:
+        print(f"  {colorize('ℹ', Colors.YELLOW)} SQLite dev database missing: {dev_db} (will be created by apply)")
+
+    # agy-standardise status
+    agy_bin = shutil.which("agy-standardise") or shutil.which("antigravity-standardise")
+    if agy_bin:
+        print(f"  {colorize('✓', Colors.GREEN)} agy-standardise available: {agy_bin}")
+    else:
+        local_agy = Path.home() / ".local" / "bin" / "agy-standardise"
+        if local_agy.exists():
+            print(f"  {colorize('✓', Colors.GREEN)} agy-standardise found in ~/.local/bin: {local_agy}")
+        else:
+            print(f"  {colorize('ℹ', Colors.BLUE)} agy-standardise not installed (run antigravity-standardise install.sh)")
+
+    # Layer 3: DevOps Governance
+    print()
+    print(colorize("--- Layer 3: Remote DevOps Governance ---", Colors.BOLD))
+    gh_std = shutil.which("gh-standardise") or (Path.home() / ".local" / "bin" / "gh-standardise")
+    if (isinstance(gh_std, Path) and gh_std.exists()) or (isinstance(gh_std, str) and shutil.which(gh_std)):
+        print(f"  {colorize('✓', Colors.GREEN)} gh-standardise available: {gh_std}")
+    else:
+        print(f"  {colorize('ℹ', Colors.BLUE)} gh-standardise not installed (run gh-standardise install.sh)")
+
+    gh_bin = shutil.which("gh")
+    if gh_bin:
+        try:
+            gh_auth = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True)
+            if gh_auth.returncode == 0:
+                print(f"  {colorize('✓', Colors.GREEN)} GitHub CLI authenticated")
+            else:
+                print(f"  {colorize('ℹ', Colors.YELLOW)} GitHub CLI installed but not authenticated (`gh auth login`)")
+        except Exception:
+            pass
+
+    print()
+    if has_failures:
+        print(colorize("Audit completed: Missing components detected. Run 'workstation-setup apply' to resolve.", Colors.YELLOW))
+        return 1
+    else:
+        print(colorize("Audit completed: All required workstation specifications verified!", Colors.GREEN))
+        return 0
+
+
+def cmd_apply(args: argparse.Namespace) -> int:
+    """Execute workstation configuration stages."""
+    target_os = detect_os(args.os)
+    profile = args.profile.lower()
+    stage = str(args.stage).lower()
+    dry_run = getattr(args, "dry_run", False)
+    install_missing = getattr(args, "install_missing", False)
+    bashrc_path = Path(args.bashrc_path).expanduser().resolve()
+    profile_path = Path(args.profile_path).expanduser().resolve() if args.profile_path else DEFAULT_PROFILE_PATH
+
+    print(colorize(f"╔═════════════════════════════════════════════════════════════════╗", Colors.BOLD))
+    print(colorize(f"║ Workstation Setup Orchestrator v{VERSION}                       ║", Colors.BOLD))
+    print(colorize(f"╚═════════════════════════════════════════════════════════════════╝", Colors.BOLD))
+    if dry_run:
+        print(colorize("Mode: DRY-RUN (No system mutations will be applied)", Colors.YELLOW))
+    print(f"Target OS: {target_os} | Profile: {profile} | Stages: {stage}")
+    print()
+
+    # Stage 0: Platform OS & Desktop
+    if stage in ("all", "0"):
+        print(colorize("[Stage 0: Platform OS & Desktop]", Colors.BOLD))
+        if target_os == "linux" and profile == "full":
+            bootstrap_script = Path.home() / "Projects" / "riced-kubuntu-os" / "bootstrap.sh"
+            if bootstrap_script.exists():
+                if dry_run:
+                    print(f"  {colorize('[DRY-RUN]', Colors.YELLOW)} Would execute desktop bootstrap: {bootstrap_script}")
+                else:
+                    print(f"  Found Kubuntu desktop bootstrap at: {bootstrap_script}")
+                    print(f"  Run manually when desktop reconfiguration is desired: {bootstrap_script}")
+            else:
+                print(f"  {colorize('ℹ', Colors.BLUE)} riced-kubuntu-os bootstrap script not found at {bootstrap_script}. Skipping.")
+        else:
+            print(f"  {colorize('ℹ', Colors.BLUE)} Stage 0 skipped (active on Linux with 'full' profile only).")
+        print()
+
+    # Stage 1: Developer Toolchains
+    if stage in ("all", "1"):
+        print(colorize(f"[Stage 1: Developer Toolchains ({profile})]", Colors.BOLD))
+        catalog = load_toolchains_catalog()
+        audits = audit_toolchains(catalog, profile=profile, target_os=target_os)
+        missing = [t for t in audits if not t["installed"]]
+
+        if not missing:
+            print(f"  {colorize('✓', Colors.GREEN)} All required toolchains for profile '{profile}' are already installed.")
+        else:
+            print(f"  Found {len(missing)} missing toolchain(s): {', '.join(t['name'] for t in missing)}")
+            for item in missing:
+                if install_missing:
+                    if dry_run:
+                        print(f"  {colorize('[DRY-RUN]', Colors.YELLOW)} Would install {item['name']}: {item['install_cmd']}")
+                    else:
+                        print(f"  Installing {item['name']}...")
+                        run_cmd_interactive(item["install_cmd"], dry_run=False)
+                else:
+                    print(f"  • {item['name']}: {colorize(item['install_cmd'], Colors.CYAN)}")
+            if not install_missing:
+                print(f"  {colorize('Note:', Colors.YELLOW)} Use --install-missing to automatically run toolchain install commands.")
+        print()
+
+    # Stage 2: Shell Environment Bridge
+    if stage in ("all", "2"):
+        print(colorize("[Stage 2: Shell Environment Bridge]", Colors.BOLD))
+        changed, msg = configure_shell_environment(
+            bashrc_path=bashrc_path,
+            profile_path=profile_path,
+            dry_run=dry_run,
+        )
+        status_label = colorize("MODIFIED", Colors.GREEN) if changed else colorize("VERIFIED", Colors.BLUE)
+        print(f"  [{status_label}] {msg}")
+        print()
+
+    # Stage 3: AI Agent Governance
+    if stage in ("all", "3"):
+        print(colorize("[Stage 3: AI Agent Governance]", Colors.BOLD))
+        agy_bin = shutil.which("agy-standardise") or shutil.which("antigravity-standardise")
+        if not agy_bin:
+            local_agy = Path.home() / ".local" / "bin" / "agy-standardise"
+            if local_agy.exists():
+                agy_bin = str(local_agy)
+
+        if agy_bin:
+            agy_cmd = f"{agy_bin} apply"
+            if dry_run:
+                agy_cmd += " --dry-run"
+            print(f"  Running AI agent permission synchronization via: {agy_cmd}")
+            run_cmd_interactive(agy_cmd, dry_run=dry_run)
+        else:
+            print(f"  {colorize('ℹ', Colors.BLUE)} agy-standardise not found in PATH or ~/.local/bin.")
+            print("    To synchronize AI agent permissions: cd ~/Projects/antigravity-standardise && ./install.sh")
+        print()
+
+    # Stage 4: DevOps Governance
+    if stage in ("all", "4"):
+        print(colorize("[Stage 4: Remote DevOps Governance]", Colors.BOLD))
+        gh_std = shutil.which("gh-standardise") or (Path.home() / ".local" / "bin" / "gh-standardise")
+        if (isinstance(gh_std, Path) and gh_std.exists()) or (isinstance(gh_std, str) and shutil.which(gh_std)):
+            print(f"  {colorize('✓', Colors.GREEN)} gh-standardise is ready.")
+        else:
+            print(f"  {colorize('ℹ', Colors.BLUE)} gh-standardise not found.")
+            print("    To install GitHub repo governance: cd ~/Projects/gh-standardise && ./install.sh")
+        print()
+
+    prefix = "Dry-run simulation" if dry_run else "Workstation orchestration"
+    print(colorize(f"✓ {prefix} completed successfully.", Colors.GREEN))
+    return 0
+
+
+def cmd_env(args: argparse.Namespace) -> int:
+    """Standalone runner for Stage 2: Shell Environment Bridge."""
+    bashrc_path = Path(args.bashrc_path).expanduser().resolve()
+    profile_path = Path(args.profile_path).expanduser().resolve() if args.profile_path else DEFAULT_PROFILE_PATH
+    db_path = Path(args.db_path).expanduser().resolve() if args.db_path else DEFAULT_DB_PATH
+    dry_run = getattr(args, "dry_run", False)
+
+    changed, msg = configure_shell_environment(
+        bashrc_path=bashrc_path,
+        profile_path=profile_path,
+        db_path=db_path,
+        dry_run=dry_run,
+    )
+    status_label = colorize("MODIFIED", Colors.GREEN) if changed else colorize("UP-TO-DATE", Colors.BLUE)
+    print(f"[{status_label}] {msg}")
+    return 0
+
+
+def cmd_toolchains(args: argparse.Namespace) -> int:
+    """Standalone runner for Stage 1: Developer Toolchains."""
+    target_os = detect_os(args.os)
+    profile = args.profile.lower()
+    install = getattr(args, "install", False)
+    dry_run = getattr(args, "dry_run", False)
+
+    catalog = load_toolchains_catalog()
+    audits = audit_toolchains(catalog, profile=profile, target_os=target_os)
+    missing = [t for t in audits if not t["installed"]]
+
+    print(f"Auditing toolchains (OS: {target_os}, Profile: {profile}):")
+    for t in audits:
+        if t["installed"]:
+            print(f"  {colorize('✓', Colors.GREEN)} {t['name']:<22} [installed]")
+        else:
+            print(f"  {colorize('✗', Colors.RED)} {t['name']:<22} [missing]")
+            print(f"      Command: {colorize(t['install_cmd'], Colors.CYAN)}")
+
+    if missing and install:
+        print()
+        print("Installing missing toolchains:")
+        for t in missing:
+            run_cmd_interactive(t["install_cmd"], dry_run=dry_run)
+    elif missing:
+        print()
+        print(f"{len(missing)} tool(s) missing. Run with --install to install.")
+
+    return 0 if not missing or install else 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Construct argument parser for workstation-setup CLI."""
+    parser = argparse.ArgumentParser(
+        prog="workstation-setup",
+        description="Cross-platform developer toolchain auditor, shell bridge, and meta-orchestrator.",
+    )
+    parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {VERSION}")
+
+    subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
+
+    # audit subcommand
+    audit_parser = subparsers.add_parser("audit", help="Audit workstation configuration across all 4 layers")
+    audit_parser.add_argument("--os", choices=["auto", "linux", "macos", "windows"], default="auto", help="Override operating system detection")
+    audit_parser.add_argument("--profile", choices=["minimal", "dev", "full"], default="dev", help="Toolchain profile tier to audit")
+    audit_parser.add_argument("--bashrc-path", default=str(DEFAULT_BASHRC_PATH), help="Path to user .bashrc file")
+    audit_parser.add_argument("-v", "--verbose", action="store_true", help="Display verbose installation commands")
+
+    # apply subcommand (alias: setup)
+    apply_parser = subparsers.add_parser("apply", aliases=["setup"], help="Execute workstation configuration stages")
+    apply_parser.add_argument("--os", choices=["auto", "linux", "macos", "windows"], default="auto", help="Override operating system detection")
+    apply_parser.add_argument("--profile", choices=["minimal", "dev", "full"], default="dev", help="Toolchain profile tier to apply")
+    apply_parser.add_argument("--stage", choices=["all", "0", "1", "2", "3", "4"], default="all", help="Specific stage to execute")
+    apply_parser.add_argument("--bashrc-path", default=str(DEFAULT_BASHRC_PATH), help="Path to user .bashrc file")
+    apply_parser.add_argument("--profile-path", default=str(DEFAULT_PROFILE_PATH), help="Path to user .profile file")
+    apply_parser.add_argument("--install-missing", action="store_true", help="Execute installation commands for missing toolchains")
+    apply_parser.add_argument("--dry-run", action="store_true", help="Simulate execution without modifying files or installing packages")
+
+    # env subcommand
+    env_parser = subparsers.add_parser("env", help="Standalone Shell Environment Bridge injector")
+    env_parser.add_argument("--bashrc-path", default=str(DEFAULT_BASHRC_PATH), help="Path to user .bashrc file")
+    env_parser.add_argument("--profile-path", default=str(DEFAULT_PROFILE_PATH), help="Path to user .profile file")
+    env_parser.add_argument("--db-path", default=str(DEFAULT_DB_PATH), help="Path to sqlite dev database")
+    env_parser.add_argument("--dry-run", action="store_true", help="Simulate injection without modifying files")
+
+    # toolchains subcommand
+    tool_parser = subparsers.add_parser("toolchains", help="Standalone toolchain auditor and installer")
+    tool_parser.add_argument("--os", choices=["auto", "linux", "macos", "windows"], default="auto", help="Override operating system detection")
+    tool_parser.add_argument("--profile", choices=["minimal", "dev", "full"], default="dev", help="Toolchain profile tier")
+    tool_parser.add_argument("--install", action="store_true", help="Install missing toolchains")
+    tool_parser.add_argument("--dry-run", action="store_true", help="Simulate installation without running commands")
+
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """CLI entrypoint."""
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if not args.command:
+        parser.print_help()
+        return 0
+
+    if args.command == "audit":
+        return cmd_audit(args)
+    elif args.command in ("apply", "setup"):
+        return cmd_apply(args)
+    elif args.command == "env":
+        return cmd_env(args)
+    elif args.command == "toolchains":
+        return cmd_toolchains(args)
+
+    parser.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

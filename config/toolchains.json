@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "description": "Declarative catalog of cross-platform developer toolchains for workstation-setup",
+  "tools": {
+    "git": {
+      "name": "Git",
+      "binary": "git",
+      "profile": "minimal",
+      "category": "vcs",
+      "description": "Distributed version control system",
+      "companion_bins": [],
+      "install": {
+        "linux": "sudo apt-get install -y git",
+        "macos": "brew install git",
+        "windows": "winget install --id Git.Git -e"
+      }
+    },
+    "gh": {
+      "name": "GitHub CLI",
+      "binary": "gh",
+      "profile": "minimal",
+      "category": "vcs",
+      "description": "Official GitHub command-line interface",
+      "companion_bins": [],
+      "install": {
+        "linux": "sudo apt-get install -y gh",
+        "macos": "brew install gh",
+        "windows": "winget install --id GitHub.cli -e"
+      }
+    },
+    "uv": {
+      "name": "Astral uv",
+      "binary": "uv",
+      "profile": "dev",
+      "category": "python",
+      "description": "Extremely fast Python package and project manager written in Rust",
+      "companion_bins": [
+        "uvx"
+      ],
+      "install": {
+        "linux": "curl -LsSf https://astral.sh/uv/install.sh | sh",
+        "macos": "curl -LsSf https://astral.sh/uv/install.sh | sh",
+        "windows": "powershell -ExecutionPolicy ByPass -c \"irm https://astral.sh/uv/install.ps1 | iex\""
+      }
+    },
+    "node": {
+      "name": "Node.js (via fnm or package manager)",
+      "binary": "node",
+      "profile": "dev",
+      "category": "javascript",
+      "description": "JavaScript runtime environment and Node ecosystem",
+      "companion_bins": [
+        "npm",
+        "npx"
+      ],
+      "install": {
+        "linux": "curl -fsSL https://fnm.vercel.app/install | bash",
+        "macos": "brew install fnm node",
+        "windows": "winget install --id OpenJS.NodeJS.LTS -e"
+      }
+    },
+    "starship": {
+      "name": "Starship Prompt",
+      "binary": "starship",
+      "profile": "dev",
+      "category": "prompt",
+      "description": "Fast, customizable, cross-shell prompt",
+      "companion_bins": [],
+      "install": {
+        "linux": "curl -sS https://starship.rs/install.sh | sh",
+        "macos": "brew install starship",
+        "windows": "winget install --id Starship.Starship -e"
+      }
+    },
+    "zoxide": {
+      "name": "Zoxide",
+      "binary": "zoxide",
+      "profile": "full",
+      "category": "shell_enhancement",
+      "description": "Smarter cd command inspired by z and autojump",
+      "companion_bins": [],
+      "install": {
+        "linux": "curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh",
+        "macos": "brew install zoxide",
+        "windows": "winget install --id ajeetdsouza.zoxide -e"
+      }
+    },
+    "fzf": {
+      "name": "FZF",
+      "binary": "fzf",
+      "profile": "full",
+      "category": "shell_enhancement",
+      "description": "General-purpose command-line fuzzy finder",
+      "companion_bins": [],
+      "install": {
+        "linux": "sudo apt-get install -y fzf",
+        "macos": "brew install fzf",
+        "windows": "winget install --id junegunn.fzf -e"
+      }
+    },
+    "eza": {
+      "name": "Eza",
+      "binary": "eza",
+      "profile": "full",
+      "category": "shell_enhancement",
+      "description": "Modern, maintained replacement for ls",
+      "companion_bins": [],
+      "install": {
+        "linux": "sudo apt-get install -y eza",
+        "macos": "brew install eza",
+        "windows": "winget install --id eza-community.eza -e"
+      }
+    }
+  }
+}
