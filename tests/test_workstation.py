@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, mock_open, patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_PATH = REPO_ROOT / "bin" / "workstation-setup"
@@ -60,7 +61,7 @@ class TestWorkstationSetup(unittest.TestCase):
         self.assertIn("tools", catalog)
         tools = catalog["tools"]
 
-        expected_tools = ["git", "gh", "uv", "node", "starship", "zoxide", "fzf", "eza"]
+        expected_tools = ["git", "gh", "zram", "uv", "node", "starship", "zoxide", "fzf", "eza"]
         for tool_name in expected_tools:
             self.assertIn(tool_name, tools, f"Catalog missing required tool: {tool_name}")
             tool_data = tools[tool_name]
@@ -80,12 +81,14 @@ class TestWorkstationSetup(unittest.TestCase):
         minimal_tools = ws.filter_tools_by_profile(catalog, "minimal")
         self.assertIn("git", minimal_tools)
         self.assertIn("gh", minimal_tools)
+        self.assertIn("zram", minimal_tools)
         self.assertNotIn("uv", minimal_tools)
         self.assertNotIn("zoxide", minimal_tools)
 
         dev_tools = ws.filter_tools_by_profile(catalog, "dev")
         self.assertIn("git", dev_tools)
         self.assertIn("gh", dev_tools)
+        self.assertIn("zram", dev_tools)
         self.assertIn("uv", dev_tools)
         self.assertIn("node", dev_tools)
         self.assertIn("starship", dev_tools)
@@ -93,6 +96,7 @@ class TestWorkstationSetup(unittest.TestCase):
 
         full_tools = ws.filter_tools_by_profile(catalog, "full")
         self.assertIn("git", full_tools)
+        self.assertIn("zram", full_tools)
         self.assertIn("uv", full_tools)
         self.assertIn("zoxide", full_tools)
         self.assertIn("fzf", full_tools)
@@ -214,6 +218,7 @@ class TestWorkstationSetup(unittest.TestCase):
         res_audit = subprocess.run(cmd_audit, capture_output=True, text=True)
         self.assertIn("Layer 1", res_audit.stdout)
         self.assertIn("Layer 2", res_audit.stdout)
+        self.assertIn("Swap/Memory buffer", res_audit.stdout)
 
         # Test toolchains subcommand --dry-run
         cmd_toolchains = [
@@ -225,6 +230,59 @@ class TestWorkstationSetup(unittest.TestCase):
         ]
         res_tools = subprocess.run(cmd_toolchains, capture_output=True, text=True)
         self.assertIn("Auditing toolchains", res_tools.stdout)
+
+    def test_check_swap_status_non_linux(self):
+        """Verify check_swap_status reports native compressed memory on non-Linux platforms."""
+        with patch("platform.system", return_value="Darwin"):
+            active, msg = ws.check_swap_status()
+            self.assertTrue(active)
+            self.assertEqual(msg, "Native compressed memory paging active")
+
+        with patch("platform.system", return_value="Windows"):
+            active, msg = ws.check_swap_status()
+            self.assertTrue(active)
+            self.assertEqual(msg, "Native compressed memory paging active")
+
+        # Explicit target_os overrides
+        self.assertTrue(ws.check_swap_status(target_os="macos")[0])
+        self.assertTrue(ws.check_swap_status(target_os="windows")[0])
+
+    def test_check_swap_status_linux_active_proc_swaps(self):
+        """Verify check_swap_status detects active swap from /proc/swaps."""
+        mock_proc_content = (
+            "Filename\tType\tSize\tUsed\tPriority\n"
+            "/dev/zram0\tpartition\t8388604\t0\t100\n"
+        )
+        with patch("platform.system", return_value="Linux"):
+            with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+                active, msg = ws.check_swap_status()
+                self.assertTrue(active)
+                self.assertEqual(msg, "Active swap/zram detected")
+
+    def test_check_swap_status_linux_no_swap(self):
+        """Verify check_swap_status flags missing swap when /proc/swaps has no entries."""
+        mock_proc_content = "Filename\tType\tSize\tUsed\tPriority\n"
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = ""
+        with patch("platform.system", return_value="Linux"):
+            with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+                with patch("subprocess.run", return_value=mock_res):
+                    active, msg = ws.check_swap_status()
+                    self.assertFalse(active)
+                    self.assertIn("No active swap or zram detected", msg)
+
+    def test_check_swap_status_linux_swapon_fallback(self):
+        """Verify check_swap_status falls back to swapon --show when /proc/swaps is unavailable."""
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = "NAME      TYPE      SIZE USED PRIO\n/dev/zram0 partition 7.7G   0B  100\n"
+        with patch("platform.system", return_value="Linux"):
+            with patch("builtins.open", side_effect=FileNotFoundError):
+                with patch("subprocess.run", return_value=mock_res):
+                    active, msg = ws.check_swap_status()
+                    self.assertTrue(active)
+                    self.assertEqual(msg, "Active swap/zram detected")
 
 
 if __name__ == "__main__":

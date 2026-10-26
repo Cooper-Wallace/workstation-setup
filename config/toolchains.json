@@ -29,6 +29,19 @@
         "windows": "winget install --id GitHub.cli -e"
       }
     },
+    "zram": {
+      "name": "ZRAM Compressed Swap",
+      "binary": "zramctl",
+      "profile": "minimal",
+      "category": "system",
+      "description": "Kernel compressed in-RAM swap device to prevent out-of-memory lockups",
+      "companion_bins": [],
+      "install": {
+        "linux": "sudo apt-get install -y zram-tools && sudo systemctl enable --now zramswap.service",
+        "macos": "# macOS has native dynamic compressed memory paging",
+        "windows": "# Windows has native compressed memory paging"
+      }
+    },
     "uv": {
       "name": "Astral uv",
       "binary": "uv",

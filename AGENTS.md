@@ -33,7 +33,7 @@ This tool operates as the central coordinator in a 4-layer workstation stack:
 - **Layer 0 (`riced-kubuntu-os`)**: Kubuntu OS, KDE Plasma 6 desktop configuration, and hardware pipelines.
 - **Layer 1 (`workstation-setup`)**: Cross-platform developer toolchains (`git`, `gh`, `uv`, `node`, `starship`, `zoxide`, `fzf`, `eza`) and Shell Environment Bridge across Linux, macOS, and Windows.
 - **Layer 2 (`antigravity-standardise`)**: AI pair programmer harness permissions, global agent directives (`AGENTS.md`), MCP servers, and autonomous workflows.
-- **Layer 3 (`gh-standardise`)**: Remote GitHub repository rulesets, squash-and-merge enforcement, and semantic PR CI quality gates.
+- **Layer 3 (`repokit`)**: Remote GitHub repository rulesets, squash-and-merge enforcement, and semantic PR CI quality gates.
 
 ---
 
