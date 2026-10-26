@@ -149,6 +149,50 @@ def audit_toolchains(
     return results
 
 
+def check_swap_status(target_os: Optional[str] = None) -> Tuple[bool, str]:
+    """
+    Check active swap and zram buffer configuration.
+    On Linux, inspects /proc/swaps and swapon --show.
+    On non-Linux systems, dynamic compressed memory paging is assumed active.
+    Returns (is_active, status_description).
+    """
+    if target_os:
+        current_os = detect_os(target_os)
+    else:
+        sys_name = platform.system().lower()
+        if sys_name == "linux":
+            current_os = "linux"
+        elif sys_name in ("darwin", "windows"):
+            current_os = sys_name
+        else:
+            current_os = detect_os()
+
+    if current_os != "linux":
+        return True, "Native compressed memory paging active"
+
+    # Check /proc/swaps
+    try:
+        with open("/proc/swaps", "r", encoding="utf-8") as f:
+            content = f.read()
+        lines = [line.strip() for line in content.strip().splitlines() if line.strip()]
+        if len(lines) > 1:
+            return True, "Active swap/zram detected"
+    except (FileNotFoundError, PermissionError, OSError):
+        pass
+
+    # Fallback to swapon --show
+    try:
+        res = subprocess.run(["swapon", "--show"], capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            lines = [line.strip() for line in res.stdout.strip().splitlines() if line.strip()]
+            if len(lines) > 1 or (len(lines) == 1 and not lines[0].startswith("NAME")):
+                return True, "Active swap/zram detected"
+    except Exception:
+        pass
+
+    return False, "No active swap or zram detected (high risk of instantaneous OOM freeze)"
+
+
 def get_standard_env_block() -> str:
     """
     Return canonical Antigravity Standards shell environment block.
@@ -283,6 +327,15 @@ def cmd_audit(args: argparse.Namespace) -> int:
     else:
         print(f"  {colorize('ℹ', Colors.BLUE)} Layer 0 desktop profile skipped on {target_os} (Linux specific)")
 
+    # System / Environment checks: Swap & memory buffer status
+    swap_ok, swap_msg = check_swap_status(target_os=target_os)
+    if swap_ok:
+        print(f"  {colorize('✓', Colors.GREEN)} Swap/Memory buffer: {swap_msg}")
+    else:
+        print(f"  {colorize('ℹ', Colors.YELLOW)} Swap/Memory buffer: {swap_msg}")
+        if target_os == "linux":
+            print(f"      To enable zram swap: {colorize('sudo apt install -y zram-tools && sudo systemctl enable --now zramswap.service', Colors.DIM)}")
+
     # Layer 1: Developer Toolchains
     print()
     print(colorize(f"--- Layer 1: Developer Toolchains ({profile} tier) ---", Colors.BOLD))
@@ -345,11 +398,11 @@ def cmd_audit(args: argparse.Namespace) -> int:
     # Layer 3: DevOps Governance
     print()
     print(colorize("--- Layer 3: Remote DevOps Governance ---", Colors.BOLD))
-    gh_std = shutil.which("gh-standardise") or (Path.home() / ".local" / "bin" / "gh-standardise")
+    gh_std = shutil.which("repokit") or (Path.home() / ".local" / "bin" / "repokit")
     if (isinstance(gh_std, Path) and gh_std.exists()) or (isinstance(gh_std, str) and shutil.which(gh_std)):
-        print(f"  {colorize('✓', Colors.GREEN)} gh-standardise available: {gh_std}")
+        print(f"  {colorize('✓', Colors.GREEN)} repokit available: {gh_std}")
     else:
-        print(f"  {colorize('ℹ', Colors.BLUE)} gh-standardise not installed (run gh-standardise install.sh)")
+        print(f"  {colorize('ℹ', Colors.BLUE)} repokit not installed (run repokit install.sh)")
 
     gh_bin = shutil.which("gh")
     if gh_bin:
@@ -465,11 +518,11 @@ def cmd_apply(args: argparse.Namespace) -> int:
     # Stage 4: DevOps Governance
     if stage in ("all", "4"):
         print(colorize("[Stage 4: Remote DevOps Governance]", Colors.BOLD))
-        gh_std = shutil.which("gh-standardise") or (Path.home() / ".local" / "bin" / "gh-standardise")
+        gh_std = shutil.which("repokit") or (Path.home() / ".local" / "bin" / "repokit")
         if (isinstance(gh_std, Path) and gh_std.exists()) or (isinstance(gh_std, str) and shutil.which(gh_std)):
-            print(f"  {colorize('✓', Colors.GREEN)} gh-standardise is ready.")
+            print(f"  {colorize('✓', Colors.GREEN)} repokit is ready.")
         else:
-            print(f"  {colorize('ℹ', Colors.BLUE)} gh-standardise not found.")
+            print(f"  {colorize('ℹ', Colors.BLUE)} repokit not found.")
             print("    To install GitHub repo governance: cd ~/Projects/gh-standardise && ./install.sh")
         print()
 

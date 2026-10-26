@@ -28,7 +28,7 @@ flowchart TD
     L0["Layer 0: Platform OS & Desktop<br/>(riced-kubuntu-os)"]
     L1["Layer 1: Developer Toolchains & Shell Bridge<br/>(workstation-setup)"]
     L2["Layer 2: AI Agent Governance<br/>(antigravity-standardise)"]
-    L3["Layer 3: Remote DevOps Governance<br/>(gh-standardise)"]
+    L3["Layer 3: Remote DevOps Governance<br/>(repokit)"]
 
     L0 --> L1
     L1 --> L2
@@ -38,7 +38,7 @@ flowchart TD
 - **Layer 0 (`riced-kubuntu-os`)**: Kubuntu OS packages, KDE Plasma 6 desktop styling, audio/display configurations, and system dotfiles.
 - **Layer 1 (`workstation-setup`)**: Cross-platform developer toolchains (`git`, `gh`, `uv`, `node`, `starship`, `zoxide`, `fzf`, `eza`), shell environment variable resolution, and local SQLite developer database initialization.
 - **Layer 2 (`antigravity-standardise`)**: AI pair programmer harness permissions, global agent directives (`AGENTS.md`), MCP servers, and autonomous workflows.
-- **Layer 3 (`gh-standardise`)**: Remote GitHub repository rulesets, squash-and-merge enforcement, and semantic PR CI quality gates.
+- **Layer 3 (`repokit`)**: Remote GitHub repository rulesets, squash-and-merge enforcement, and semantic PR CI quality gates.
 
 ---
 
