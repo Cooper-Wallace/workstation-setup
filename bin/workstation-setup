@@ -384,16 +384,16 @@ def cmd_audit(args: argparse.Namespace) -> int:
     else:
         print(f"  {colorize('ℹ', Colors.YELLOW)} SQLite dev database missing: {dev_db} (will be created by apply)")
 
-    # agy-standardise status
-    agy_bin = shutil.which("agy-standardise") or shutil.which("antigravity-standardise")
-    if agy_bin:
-        print(f"  {colorize('✓', Colors.GREEN)} agy-standardise available: {agy_bin}")
+    # agentkit status
+    agentkit_bin = shutil.which("agentkit")
+    if agentkit_bin:
+        print(f"  {colorize('✓', Colors.GREEN)} agentkit available: {agentkit_bin}")
     else:
-        local_agy = Path.home() / ".local" / "bin" / "agy-standardise"
-        if local_agy.exists():
-            print(f"  {colorize('✓', Colors.GREEN)} agy-standardise found in ~/.local/bin: {local_agy}")
+        local_agentkit = Path.home() / ".local" / "bin" / "agentkit"
+        if local_agentkit.exists():
+            print(f"  {colorize('✓', Colors.GREEN)} agentkit found in ~/.local/bin: {local_agentkit}")
         else:
-            print(f"  {colorize('ℹ', Colors.BLUE)} agy-standardise not installed (run antigravity-standardise install.sh)")
+            print(f"  {colorize('ℹ', Colors.BLUE)} agentkit not installed (run agentkit install.sh)")
 
     # Layer 3: DevOps Governance
     print()
@@ -498,21 +498,21 @@ def cmd_apply(args: argparse.Namespace) -> int:
     # Stage 3: AI Agent Governance
     if stage in ("all", "3"):
         print(colorize("[Stage 3: AI Agent Governance]", Colors.BOLD))
-        agy_bin = shutil.which("agy-standardise") or shutil.which("antigravity-standardise")
-        if not agy_bin:
-            local_agy = Path.home() / ".local" / "bin" / "agy-standardise"
-            if local_agy.exists():
-                agy_bin = str(local_agy)
+        agentkit_bin = shutil.which("agentkit")
+        if not agentkit_bin:
+            local_agentkit = Path.home() / ".local" / "bin" / "agentkit"
+            if local_agentkit.exists():
+                agentkit_bin = str(local_agentkit)
 
-        if agy_bin:
-            agy_cmd = f"{agy_bin} apply"
+        if agentkit_bin:
+            cmd = f"{agentkit_bin} apply"
             if dry_run:
-                agy_cmd += " --dry-run"
-            print(f"  Running AI agent permission synchronization via: {agy_cmd}")
-            run_cmd_interactive(agy_cmd, dry_run=dry_run)
+                cmd += " --dry-run"
+            print(f"  Running AI agent governance and wake-lock configuration via: {cmd}")
+            run_cmd_interactive(cmd, dry_run=dry_run)
         else:
-            print(f"  {colorize('ℹ', Colors.BLUE)} agy-standardise not found in PATH or ~/.local/bin.")
-            print("    To synchronize AI agent permissions: cd ~/Projects/antigravity-standardise && ./install.sh")
+            print(f"  {colorize('ℹ', Colors.BLUE)} agentkit not found in PATH or ~/.local/bin.")
+            print("    To synchronize AI agent permissions: cd ~/Projects/agentkit && ./install.sh && agentkit apply")
         print()
 
     # Stage 4: DevOps Governance

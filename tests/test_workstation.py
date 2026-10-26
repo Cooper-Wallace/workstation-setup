@@ -3,8 +3,10 @@
 Unit and integration tests for workstation-setup CLI and library modules.
 """
 
+import argparse
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -205,7 +207,7 @@ class TestWorkstationSetup(unittest.TestCase):
         self.assertIn("MODIFIED", res_env.stdout)
 
         # Now actually apply env to test_bashrc so audit has a valid env block
-        ws.configure_shell_environment(test_bashrc, test_profile, dry_run=False)
+        ws.configure_shell_environment(test_bashrc, test_profile, db_path=self.test_root / "dev.db", dry_run=False)
 
         # Test audit subcommand
         cmd_audit = [
@@ -283,6 +285,157 @@ class TestWorkstationSetup(unittest.TestCase):
                     active, msg = ws.check_swap_status()
                     self.assertTrue(active)
                     self.assertEqual(msg, "Active swap/zram detected")
+
+    def test_stage3_apply_with_agentkit_in_path(self):
+        """Verify Stage 3 applies agentkit from PATH with and without dry-run."""
+        test_bashrc = self.test_root / ".bashrc"
+        test_bashrc.write_text("# bashrc\n", encoding="utf-8")
+        test_profile = self.test_root / ".profile"
+        test_profile.write_text("# profile\n", encoding="utf-8")
+
+        args = argparse.Namespace(
+            os="auto",
+            profile="minimal",
+            stage="3",
+            dry_run=False,
+            install_missing=False,
+            bashrc_path=str(test_bashrc),
+            profile_path=str(test_profile),
+        )
+
+        with patch("shutil.which", return_value="/usr/local/bin/agentkit"):
+            with patch.object(ws, "run_cmd_interactive", return_value=0) as mock_run:
+                with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                    ret = ws.cmd_apply(args)
+                    self.assertEqual(ret, 0)
+                    mock_run.assert_called_once_with("/usr/local/bin/agentkit apply", dry_run=False)
+                    out = mock_stdout.getvalue()
+                    self.assertIn("Running AI agent governance and wake-lock configuration via: /usr/local/bin/agentkit apply", out)
+
+        # Test with dry_run=True
+        args.dry_run = True
+        with patch("shutil.which", return_value="/usr/local/bin/agentkit"):
+            with patch.object(ws, "run_cmd_interactive", return_value=0) as mock_run:
+                with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                    ret = ws.cmd_apply(args)
+                    self.assertEqual(ret, 0)
+                    mock_run.assert_called_once_with("/usr/local/bin/agentkit apply --dry-run", dry_run=True)
+                    out = mock_stdout.getvalue()
+                    self.assertIn("Running AI agent governance and wake-lock configuration via: /usr/local/bin/agentkit apply --dry-run", out)
+
+    def test_stage3_apply_with_local_agentkit(self):
+        """Verify Stage 3 applies agentkit found in ~/.local/bin when not in PATH."""
+        test_bashrc = self.test_root / ".bashrc"
+        test_bashrc.write_text("# bashrc\n", encoding="utf-8")
+        test_profile = self.test_root / ".profile"
+        test_profile.write_text("# profile\n", encoding="utf-8")
+
+        local_bin = self.test_root / ".local" / "bin"
+        local_bin.mkdir(parents=True, exist_ok=True)
+        local_agentkit = local_bin / "agentkit"
+        local_agentkit.touch()
+
+        args = argparse.Namespace(
+            os="auto",
+            profile="minimal",
+            stage="3",
+            dry_run=False,
+            install_missing=False,
+            bashrc_path=str(test_bashrc),
+            profile_path=str(test_profile),
+        )
+
+        with patch("shutil.which", return_value=None):
+            with patch.object(Path, "home", return_value=self.test_root):
+                with patch.object(ws, "run_cmd_interactive", return_value=0) as mock_run:
+                    with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                        ret = ws.cmd_apply(args)
+                        self.assertEqual(ret, 0)
+                        mock_run.assert_called_once_with(f"{local_agentkit} apply", dry_run=False)
+                        out = mock_stdout.getvalue()
+                        self.assertIn(f"Running AI agent governance and wake-lock configuration via: {local_agentkit} apply", out)
+
+    def test_stage3_apply_missing_agentkit(self):
+        """Verify Stage 3 outputs advisory instructions when agentkit is not installed."""
+        test_bashrc = self.test_root / ".bashrc"
+        test_bashrc.write_text("# bashrc\n", encoding="utf-8")
+        test_profile = self.test_root / ".profile"
+        test_profile.write_text("# profile\n", encoding="utf-8")
+
+        args = argparse.Namespace(
+            os="auto",
+            profile="minimal",
+            stage="3",
+            dry_run=False,
+            install_missing=False,
+            bashrc_path=str(test_bashrc),
+            profile_path=str(test_profile),
+        )
+
+        with patch("shutil.which", return_value=None):
+            with patch.object(Path, "home", return_value=self.test_root):
+                with patch.object(ws, "run_cmd_interactive") as mock_run:
+                    with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                        ret = ws.cmd_apply(args)
+                        self.assertEqual(ret, 0)
+                        mock_run.assert_not_called()
+                        out = mock_stdout.getvalue()
+                        self.assertIn("agentkit not found in PATH or ~/.local/bin.", out)
+                        self.assertIn("To synchronize AI agent permissions: cd ~/Projects/agentkit && ./install.sh && agentkit apply", out)
+
+    def test_audit_agentkit_status(self):
+        """Verify cmd_audit reports agentkit presence from PATH, ~/.local/bin, or missing."""
+        test_bashrc = self.test_root / ".bashrc"
+        test_bashrc.write_text("# bashrc\n", encoding="utf-8")
+        ws.configure_shell_environment(test_bashrc, None, db_path=self.test_root / "dev.db", dry_run=False)
+
+        args = argparse.Namespace(
+            os="auto",
+            profile="minimal",
+            bashrc_path=str(test_bashrc),
+            verbose=False,
+        )
+
+        # 1. agentkit in PATH
+        original_which = shutil.which
+        def which_path(cmd):
+            if cmd == "agentkit":
+                return "/usr/bin/agentkit"
+            return original_which(cmd)
+
+        with patch("shutil.which", side_effect=which_path):
+            with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                ws.cmd_audit(args)
+                out = mock_stdout.getvalue()
+                self.assertIn("agentkit available: /usr/bin/agentkit", out)
+
+        # 2. agentkit in ~/.local/bin
+        local_bin = self.test_root / ".local" / "bin"
+        local_bin.mkdir(parents=True, exist_ok=True)
+        local_agentkit = local_bin / "agentkit"
+        local_agentkit.touch()
+
+        def which_none(cmd):
+            if cmd == "agentkit":
+                return None
+            return original_which(cmd)
+
+        with patch("shutil.which", side_effect=which_none):
+            with patch.object(Path, "home", return_value=self.test_root):
+                with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                    ws.cmd_audit(args)
+                    out = mock_stdout.getvalue()
+                    self.assertIn(f"agentkit found in ~/.local/bin: {local_agentkit}", out)
+
+        # 3. agentkit missing entirely
+        local_agentkit.unlink()
+
+        with patch("shutil.which", side_effect=which_none):
+            with patch.object(Path, "home", return_value=self.test_root):
+                with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                    ws.cmd_audit(args)
+                    out = mock_stdout.getvalue()
+                    self.assertIn("agentkit not installed (run agentkit install.sh)", out)
 
 
 if __name__ == "__main__":
