@@ -28,6 +28,17 @@ TOOLCHAINS_FILE = CONFIG_DIR / "toolchains.json"
 DEFAULT_BASHRC_PATH = Path.home() / ".bashrc"
 DEFAULT_PROFILE_PATH = Path.home() / ".profile"
 DEFAULT_DB_PATH = Path.home() / "dev.db"
+DEFAULT_AGENTVAULT_PATH = Path.home() / "Documents" / "AgentVault"
+DEFAULT_AGENTVAULT_SLUG = "Cooper-Wallace/AgentVault"
+
+# Obsidian workspace ignore entries
+OBSIDIAN_GITIGNORE_ENTRIES = [
+    ".obsidian/workspace.json",
+    ".obsidian/workspace-mobile.json",
+    ".obsidian/cache",
+    ".trash/",
+    ".DS_Store",
+]
 
 # Canonical markers for the Antigravity Standards Environment block
 ENV_BLOCK_START = "# >>> Antigravity Standards Environment >>>"
@@ -193,10 +204,182 @@ def check_swap_status(target_os: Optional[str] = None) -> Tuple[bool, str]:
     return False, "No active swap or zram detected (high risk of instantaneous OOM freeze)"
 
 
+def resolve_agentvault_path(explicit_path: Optional[str | Path] = None) -> Path:
+    """
+    Resolve Obsidian AgentVault directory path in priority order:
+    1. explicit_path
+    2. AGENTKIT_AGENTVAULT_PATH environment variable
+    3. AGENTKIT_VAULT_PATH environment variable
+    4. DEFAULT_AGENTVAULT_PATH (~/Documents/AgentVault)
+    """
+    if explicit_path:
+        return Path(explicit_path).expanduser().resolve()
+    env_agentvault = os.environ.get("AGENTKIT_AGENTVAULT_PATH")
+    if env_agentvault:
+        return Path(env_agentvault).expanduser().resolve()
+    env_vault = os.environ.get("AGENTKIT_VAULT_PATH")
+    if env_vault:
+        return Path(env_vault).expanduser().resolve()
+    return DEFAULT_AGENTVAULT_PATH
+
+
+def get_agentkit_bin() -> Optional[str]:
+    """Resolve agentkit binary from PATH or ~/.local/bin."""
+    bin_in_path = shutil.which("agentkit")
+    if bin_in_path:
+        return bin_in_path
+    local_bin = Path.home() / ".local" / "bin" / "agentkit"
+    if local_bin.exists():
+        return str(local_bin)
+    return None
+
+
+def ensure_obsidian_gitignore(vault_path: Path) -> None:
+    """Ensure .gitignore inside vault has necessary Obsidian workspace ignores."""
+    gitignore_file = vault_path / ".gitignore"
+    if not gitignore_file.exists():
+        gitignore_file.write_text("\n".join(OBSIDIAN_GITIGNORE_ENTRIES) + "\n", encoding="utf-8")
+        return
+    try:
+        content = gitignore_file.read_text(encoding="utf-8")
+    except Exception:
+        content = ""
+    existing_lines = {line.strip() for line in content.splitlines()}
+    missing = [entry for entry in OBSIDIAN_GITIGNORE_ENTRIES if entry not in existing_lines]
+    if missing:
+        prefix = "\n" if content and not content.endswith("\n") else ""
+        gitignore_file.write_text(content + prefix + "\n".join(missing) + "\n", encoding="utf-8")
+
+
+def ensure_agentvault_setup(
+    vault_path: Optional[Path] = None,
+    remote_slug: str = DEFAULT_AGENTVAULT_SLUG,
+    dry_run: bool = False,
+) -> Tuple[bool, str]:
+    """
+    Ensure Obsidian AgentVault is provisioned, git-tracked, and synchronized.
+    Returns (changed, summary_message).
+    """
+    target_vault = vault_path or resolve_agentvault_path()
+
+    if dry_run:
+        if not target_vault.exists():
+            return True, f"Would clone {remote_slug} or initialize AgentVault at {target_vault}"
+        if not (target_vault / ".git").exists():
+            return True, f"Would initialize git repository in AgentVault at {target_vault}"
+        return False, f"Would sync git-backed AgentVault at {target_vault}"
+
+    # Case A: target_vault does not exist or directory is empty
+    is_case_a = (not target_vault.exists()) or (target_vault.is_dir() and not any(target_vault.iterdir()))
+
+    if is_case_a:
+        cloned = False
+        if shutil.which("gh"):
+            try:
+                res = subprocess.run(
+                    ["gh", "repo", "clone", remote_slug, str(target_vault)],
+                    capture_output=True,
+                    text=True,
+                )
+                if res.returncode == 0 and (target_vault / ".git").exists():
+                    cloned = True
+            except Exception:
+                pass
+
+        if not cloned and shutil.which("git"):
+            try:
+                res = subprocess.run(
+                    ["git", "clone", f"https://github.com/{remote_slug}.git", str(target_vault)],
+                    capture_output=True,
+                    text=True,
+                )
+                if res.returncode == 0 and (target_vault / ".git").exists():
+                    cloned = True
+            except Exception:
+                pass
+
+        if cloned:
+            ensure_obsidian_gitignore(target_vault)
+            return True, f"Cloned git-backed AgentVault ({remote_slug}) to {target_vault}"
+
+        # Guarded Degrade Path: If cloning fails (e.g. offline, unauthenticated, or remote missing)
+        target_vault.mkdir(parents=True, exist_ok=True)
+        git_init = subprocess.run(
+            ["git", "-C", str(target_vault), "init", "-b", "main"],
+            capture_output=True,
+            text=True,
+        )
+        if git_init.returncode != 0:
+            subprocess.run(["git", "-C", str(target_vault), "init"], capture_output=True, text=True)
+            subprocess.run(["git", "-C", str(target_vault), "branch", "-M", "main"], capture_output=True, text=True)
+
+        ensure_obsidian_gitignore(target_vault)
+
+        agentkit_bin = get_agentkit_bin()
+        if agentkit_bin:
+            try:
+                subprocess.run(
+                    [agentkit_bin, "vault", "init", "--path", str(target_vault)],
+                    capture_output=True,
+                    text=True,
+                )
+            except Exception:
+                pass
+
+        return True, f"Initialized local git-backed AgentVault at {target_vault} (offline/fallback mode)"
+
+    # Case B: target_vault exists and is not empty
+    ensure_obsidian_gitignore(target_vault)
+    if not (target_vault / ".git").exists():
+        git_init = subprocess.run(
+            ["git", "-C", str(target_vault), "init", "-b", "main"],
+            capture_output=True,
+            text=True,
+        )
+        if git_init.returncode != 0:
+            subprocess.run(["git", "-C", str(target_vault), "init"], capture_output=True, text=True)
+            subprocess.run(["git", "-C", str(target_vault), "branch", "-M", "main"], capture_output=True, text=True)
+        subprocess.run(["git", "-C", str(target_vault), "add", "-A"], capture_output=True, text=True)
+        res_commit = subprocess.run(
+            ["git", "-C", str(target_vault), "commit", "-m", "chore(vault): initialize git-backed Obsidian AgentVault"],
+            capture_output=True,
+            text=True,
+        )
+        if res_commit.returncode != 0:
+            subprocess.run(
+                [
+                    "git", "-C", str(target_vault),
+                    "-c", "user.name=Cooper Wallace",
+                    "-c", "user.email=cooper@wallace.dev",
+                    "commit", "-m", "chore(vault): initialize git-backed Obsidian AgentVault",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        return True, f"Initialized git tracking for existing AgentVault at {target_vault}"
+    else:
+        res_remote = subprocess.run(
+            ["git", "-C", str(target_vault), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+        )
+        if res_remote.returncode == 0 and res_remote.stdout.strip():
+            try:
+                subprocess.run(
+                    ["git", "-C", str(target_vault), "pull", "--rebase", "--autostash", "origin", "main"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+            except Exception:
+                pass
+        return False, f"Verified git-backed AgentVault at {target_vault}"
+
+
 def get_standard_env_block() -> str:
     """
     Return canonical Antigravity Standards shell environment block.
-    Dynamically exports GITHUB_PERSONAL_ACCESS_TOKEN and SQLITE_DEV_DB.
+    Dynamically exports GITHUB_PERSONAL_ACCESS_TOKEN, SQLITE_DEV_DB, and AGENTKIT_AGENTVAULT_PATH.
     """
     lines = [
         ENV_BLOCK_START,
@@ -207,6 +390,9 @@ def get_standard_env_block() -> str:
         "",
         "# Default SQLite development database path for Antigravity SQLite MCP server",
         'export SQLITE_DEV_DB="${SQLITE_DEV_DB:-$HOME/dev.db}"',
+        "",
+        "# Default Obsidian AgentVault path for cross-session agent memory and repokit exemptions",
+        'export AGENTKIT_AGENTVAULT_PATH="${AGENTKIT_AGENTVAULT_PATH:-$HOME/Documents/AgentVault}"',
         ENV_BLOCK_END,
     ]
     return "\n".join(lines)
@@ -384,6 +570,15 @@ def cmd_audit(args: argparse.Namespace) -> int:
     else:
         print(f"  {colorize('ℹ', Colors.YELLOW)} SQLite dev database missing: {dev_db} (will be created by apply)")
 
+    # Obsidian AgentVault status
+    vault_dir = resolve_agentvault_path()
+    if vault_dir.exists() and (vault_dir / ".git").exists():
+        print(f"  {colorize('✓', Colors.GREEN)} Obsidian AgentVault present (git-tracked): {vault_dir}")
+    elif vault_dir.exists():
+        print(f"  {colorize('ℹ', Colors.YELLOW)} Obsidian AgentVault present (untracked; run apply to init git): {vault_dir}")
+    else:
+        print(f"  {colorize('ℹ', Colors.BLUE)} Obsidian AgentVault missing: {vault_dir} (will be provisioned by apply)")
+
     # agentkit status
     agentkit_bin = shutil.which("agentkit")
     if agentkit_bin:
@@ -498,18 +693,23 @@ def cmd_apply(args: argparse.Namespace) -> int:
     # Stage 3: AI Agent Governance
     if stage in ("all", "3"):
         print(colorize("[Stage 3: AI Agent Governance]", Colors.BOLD))
-        agentkit_bin = shutil.which("agentkit")
-        if not agentkit_bin:
-            local_agentkit = Path.home() / ".local" / "bin" / "agentkit"
-            if local_agentkit.exists():
-                agentkit_bin = str(local_agentkit)
+        vault_changed, vault_msg = ensure_agentvault_setup(dry_run=dry_run)
+        status_label = colorize("MODIFIED", Colors.GREEN) if vault_changed else colorize("VERIFIED", Colors.BLUE)
+        print(f"  [{status_label}] {vault_msg}")
 
+        agentkit_bin = get_agentkit_bin()
         if agentkit_bin:
             cmd = f"{agentkit_bin} apply"
             if dry_run:
                 cmd += " --dry-run"
             print(f"  Running AI agent governance and wake-lock configuration via: {cmd}")
             run_cmd_interactive(cmd, dry_run=dry_run)
+
+            sync_cmd = f"{agentkit_bin} vault sync"
+            if dry_run:
+                sync_cmd += " --dry-run"
+            print(f"  Synchronizing Obsidian AgentVault via: {sync_cmd}")
+            run_cmd_interactive(sync_cmd, dry_run=dry_run)
         else:
             print(f"  {colorize('ℹ', Colors.BLUE)} agentkit not found in PATH or ~/.local/bin.")
             print("    To synchronize AI agent permissions: cd ~/Projects/agentkit && ./install.sh && agentkit apply")
