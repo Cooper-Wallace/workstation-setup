@@ -124,6 +124,86 @@
         "macos": "brew install eza",
         "windows": "winget install --id eza-community.eza -e"
       }
+    },
+    "go": {
+      "name": "Go Toolchain",
+      "binary": "go",
+      "profile": "dev",
+      "category": "golang",
+      "description": "Go programming language compiler, module manager, and runtime",
+      "companion_bins": [
+        "gofmt"
+      ],
+      "install": {
+        "linux": "sudo apt-get install -y golang-go",
+        "macos": "brew install go",
+        "windows": "winget install --id GoLang.Go -e"
+      }
+    },
+    "docker": {
+      "name": "Docker Engine & CLI",
+      "binary": "docker",
+      "profile": "dev",
+      "category": "containers",
+      "description": "OCI container runtime and image build toolchain",
+      "companion_bins": [],
+      "install": {
+        "linux": "sudo apt-get install -y docker.io docker-buildx",
+        "macos": "brew install --cask docker",
+        "windows": "winget install --id Docker.DockerDesktop -e"
+      }
+    },
+    "kubectl": {
+      "name": "Kubernetes CLI (kubectl)",
+      "binary": "kubectl",
+      "profile": "full",
+      "category": "kubernetes",
+      "description": "Kubernetes cluster command-line control tool",
+      "companion_bins": [],
+      "install": {
+        "linux": "sudo snap install kubectl --classic",
+        "macos": "brew install kubernetes-cli",
+        "windows": "winget install --id Kubernetes.kubectl -e"
+      }
+    },
+    "k3s": {
+      "name": "K3s Lightweight Kubernetes",
+      "binary": "k3s",
+      "profile": "full",
+      "category": "kubernetes",
+      "description": "Lightweight CNCF-certified Kubernetes distribution for homelab and edge",
+      "companion_bins": [],
+      "install": {
+        "linux": "curl -sfL https://get.k3s.io | sh -",
+        "macos": "brew install k3d",
+        "windows": "winget install --id k3d.k3d -e"
+      }
+    },
+    "helm": {
+      "name": "Helm Package Manager",
+      "binary": "helm",
+      "profile": "full",
+      "category": "kubernetes",
+      "description": "Kubernetes package and chart manager",
+      "companion_bins": [],
+      "install": {
+        "linux": "sudo snap install helm --classic",
+        "macos": "brew install helm",
+        "windows": "winget install --id Helm.Helm -e"
+      }
+    },
+    "k9s": {
+      "name": "K9s Terminal UI",
+      "binary": "k9s",
+      "profile": "full",
+      "category": "kubernetes",
+      "description": "Terminal-based UI to interact with Kubernetes clusters",
+      "companion_bins": [],
+      "install": {
+        "linux": "sudo snap install k9s",
+        "macos": "brew install derailed/k9s/k9s",
+        "windows": "winget install --id Derailed.k9s -e"
+      }
     }
   }
 }
