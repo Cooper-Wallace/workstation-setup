@@ -27,7 +27,7 @@ Modern development environments require coordinating operating system packages, 
 flowchart TD
     L0["Layer 0: Platform OS & Desktop<br/>(riced-kubuntu-os)"]
     L1["Layer 1: Developer Toolchains & Shell Bridge<br/>(workstation-setup)"]
-    L2["Layer 2: AI Agent Governance<br/>(antigravity-standardise)"]
+    L2["Layer 2: AI Agent Governance & AgentVault<br/>(agentkit)"]
     L3["Layer 3: Remote DevOps Governance<br/>(repokit)"]
 
     L0 --> L1
@@ -37,7 +37,7 @@ flowchart TD
 
 - **Layer 0 (`riced-kubuntu-os`)**: Kubuntu OS packages, KDE Plasma 6 desktop styling, audio/display configurations, and system dotfiles.
 - **Layer 1 (`workstation-setup`)**: Cross-platform developer toolchains (`git`, `gh`, `uv`, `node`, `starship`, `zoxide`, `fzf`, `eza`), shell environment variable resolution, and local SQLite developer database initialization.
-- **Layer 2 (`antigravity-standardise`)**: AI pair programmer harness permissions, global agent directives (`AGENTS.md`), MCP servers, and autonomous workflows.
+- **Layer 2 (`agentkit`)**: AI pair programmer harness permissions, Git-backed Obsidian `AgentVault` (`$HOME/Documents/AgentVault`) provisioning and synchronization via `agentkit vault sync`, global agent directives (`AGENTS.md`), MCP servers, and autonomous workflows.
 - **Layer 3 (`repokit`)**: Remote GitHub repository rulesets, squash-and-merge enforcement, and semantic PR CI quality gates.
 
 ---
@@ -67,11 +67,15 @@ fi
 
 # Default SQLite development database path for Antigravity SQLite MCP server
 export SQLITE_DEV_DB="${SQLITE_DEV_DB:-$HOME/dev.db}"
+
+# Default Obsidian AgentVault path for cross-session agent memory and repokit exemptions
+export AGENTKIT_AGENTVAULT_PATH="${AGENTKIT_AGENTVAULT_PATH:-$HOME/Documents/AgentVault}"
 # <<< Antigravity Standards Environment <<<
 ```
 
 - **Keyring-backed Token Resolution**: Resolves `GITHUB_PERSONAL_ACCESS_TOKEN` dynamically via `gh auth token` without hardcoding plain-text secrets in shell configs.
 - **SQLite MCP Server Database**: Automatically initializes `$HOME/dev.db` for the local Model Context Protocol SQLite server.
+- **Obsidian AgentVault Bridge**: Exports `AGENTKIT_AGENTVAULT_PATH` so `agentkit` and `repokit` share a consistent, git-backed vault path across workstations.
 - **Full Idempotence**: Updates in place if the block exists, or cleanly appends if not present.
 
 ---
@@ -126,7 +130,10 @@ workstation-setup apply --profile dev --install-missing
 
 # Target specific stages (0: OS, 1: Toolchains, 2: Shell, 3: Agent, 4: DevOps)
 workstation-setup apply --stage 2
+workstation-setup apply --stage 3
 ```
+
+- **Stage 3 (AI Agent Governance & AgentVault)**: Provisions and synchronizes the Git-backed Obsidian `AgentVault` (`$HOME/Documents/AgentVault`) with standard Obsidian workspace `.gitignore` rules, invokes `agentkit vault sync`, and enforces harness permissions via `agentkit apply`. Includes a guarded offline degrade path if remote cloning fails.
 
 ### 3. Standalone Subcommands
 

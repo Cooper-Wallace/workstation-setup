@@ -32,7 +32,7 @@ This tool operates as the central coordinator in a 4-layer workstation stack:
 
 - **Layer 0 (`riced-kubuntu-os`)**: Kubuntu OS, KDE Plasma 6 desktop configuration, and hardware pipelines.
 - **Layer 1 (`workstation-setup`)**: Cross-platform developer toolchains (`git`, `gh`, `uv`, `node`, `starship`, `zoxide`, `fzf`, `eza`) and Shell Environment Bridge across Linux, macOS, and Windows.
-- **Layer 2 (`antigravity-standardise`)**: AI pair programmer harness permissions, global agent directives (`AGENTS.md`), MCP servers, and autonomous workflows.
+- **Layer 2 (`agentkit` / `antigravity-standardise`)**: AI pair programmer harness permissions, Git-backed Obsidian `AgentVault` (`$HOME/Documents/AgentVault`) provisioning and synchronization via `agentkit vault sync`, global agent directives (`AGENTS.md`), MCP servers, and autonomous workflows.
 - **Layer 3 (`repokit`)**: Remote GitHub repository rulesets, squash-and-merge enforcement, and semantic PR CI quality gates.
 
 ---
@@ -62,3 +62,7 @@ This tool operates as the central coordinator in a 4-layer workstation stack:
 5. **Conventional Commits 1.0.0**:
    - Commit messages must strictly follow: `<type>(<scope>): <short summary>`
    - Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
+
+6. **AgentVault Memory & Shell Environment Bridge**:
+   - Stage 2 exports `AGENTKIT_AGENTVAULT_PATH` (`$HOME/Documents/AgentVault` by default) so `agentkit` and `repokit` share a consistent vault path across workstations.
+   - Stage 3 provisions and synchronizes the Git-backed Obsidian `AgentVault`, tracking markdown knowledge bases, project notes, and session handoffs with standard `.obsidian` ignores and graceful offline degradation.
