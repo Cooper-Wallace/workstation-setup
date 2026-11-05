@@ -1067,7 +1067,7 @@ func CmdApply(out io.Writer, args ApplyOptions) int {
 			fmt.Fprintf(out, "  %s repokit is ready.\n", Colorize(out, "✓", ColorGreen))
 		} else {
 			fmt.Fprintf(out, "  %s repokit not found.\n", Colorize(out, "ℹ", ColorBlue))
-			fmt.Fprintln(out, "    To install GitHub repo governance: cd ~/Projects/gh-standardise && ./install.sh")
+			fmt.Fprintln(out, "    To install GitHub repo governance: cd ~/Projects/repokit && ./install.sh")
 		}
 		fmt.Fprintln(out)
 	}
