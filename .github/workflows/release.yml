@@ -10,20 +10,18 @@ permissions:
   pull-requests: write
 
 jobs:
-  release-please:
+  release-stage:
     name: "Semantic Release Gate"
-    uses: Cooper-Wallace/repokit/.github/workflows/reusable-release-prep.yml@main
+    uses: Cooper-Wallace/repokit/.github/workflows/reusable-release-prep.yml@v1
     with:
-      release-type: "go"
-      token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GH_PAT || github.token }}
-    secrets: inherit
+      staging-branch: "release-staging"
+      target-branch: "main"
 
   package-release:
     name: "Package & Upload Assets"
-    needs: release-please
-    if: ${{ needs.release-please.outputs.releases_created == 'true' }}
-    uses: Cooper-Wallace/repokit/.github/workflows/reusable-release-go.yml@main
+    needs: release-stage
+    if: ${{ needs.release-stage.outputs.releases_created == 'true' }}
+    uses: Cooper-Wallace/repokit/.github/workflows/reusable-release-go.yml@v1
     with:
-      tag-name: ${{ needs.release-please.outputs.tag_name }}
+      tag-name: ${{ needs.release-stage.outputs.tag_name }}
       go-version: "1.23"
-    secrets: inherit
