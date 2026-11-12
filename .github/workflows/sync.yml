@@ -11,11 +11,14 @@ on:
         required: false
         default: false
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   sync:
     name: "Sync with Repokit Governance"
     uses: Cooper-Wallace/repokit/.github/workflows/reusable-sync.yml@main
     with:
       dry-run: ${{ inputs.dry-run || false }}
-    secrets:
-      inherit
+    secrets: inherit
