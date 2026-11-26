@@ -18,7 +18,6 @@ jobs:
     with:
       staging-branch: "release-staging"
       target-branch: "main"
-    secrets: inherit
 
   package-release:
     name: "Package & Upload Assets"
@@ -28,4 +27,3 @@ jobs:
     with:
       tag-name: ${{ needs.release-stage.outputs.tag_name }}
       go-version: "1.23"
-    secrets: inherit

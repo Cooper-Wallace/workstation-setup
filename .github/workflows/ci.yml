@@ -17,6 +17,7 @@ jobs:
 
   ci:
     uses: Cooper-Wallace/repokit/.github/workflows/reusable-go.yml@v1
+    secrets: inherit
     with:
       go-version: "1.23"
       min-coverage: 80
