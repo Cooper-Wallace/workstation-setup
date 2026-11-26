@@ -1200,3 +1200,27 @@ func TestCmdApplyAdditionalBranches(t *testing.T) {
 		t.Errorf("expected orchestration completed successfully message")
 	}
 }
+
+func TestCmdApplyStage4RepokitMissing(t *testing.T) {
+	defer resetGlobals()
+
+	tmpDir := t.TempDir()
+	UserHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	LookPath = func(file string) (string, error) {
+		return "", exec.ErrNotFound
+	}
+
+	var buf bytes.Buffer
+	code := CmdApply(&buf, ApplyOptions{
+		OS:    "linux",
+		Stage: "4",
+	})
+	if code != 0 {
+		t.Errorf("apply stage 4 failed: %d", code)
+	}
+	if !strings.Contains(buf.String(), "cd ~/Projects/repokit && ./install.sh") {
+		t.Errorf("expected repokit install hint, got: %s", buf.String())
+	}
+}
